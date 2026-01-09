@@ -5,8 +5,12 @@
 
   function formatNote(n){
     const d = new Date(n.createdAt);
-    return `<div class="note" data-id="${n.id}"><strong>${n.type}</strong> by ${n.author} <small>${d.toLocaleString()}</small>
-      <div>${n.content}</div>
+      (function() {
+        // Connect explicitly to backend socket server (port 3100)
+        const backendHost = (location.hostname || 'localhost');
+        const backendProto = location.protocol === 'https:' ? 'https:' : 'http:';
+        const socketUrl = `${backendProto}//${backendHost}:3100`;
+        const socket = io(socketUrl);
       ${n.expiresAt?`<div>Expires: ${new Date(n.expiresAt).toLocaleString()}</div>`:''}
       <button onclick="(function(id){window.deleteNote(id)})(\'${n.id}\')">삭제</button>
     </div>`;
