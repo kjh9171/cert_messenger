@@ -94,8 +94,8 @@ def fetch_data():
                 # 상세 정보 링크 생성
                 link_tag = cols[1].find('a')
                 link = "https://www.cvedetails.com" + link_tag['href'] if link_tag else URLS["cisa_kev"]
-                all_content.append({"source": "CISA 취약점 알림", "title": title, "link": link})
-    except Exception as e: print(f"CISA CVE 크롤링 실패: {e}")
+                all_content.append({"source": "cve 취약점 알림", "title": title, "link": link})
+    except Exception as e: print(f"CVE 크롤링 실패: {e}")
 
     # 3. 보안뉴스
     try:
