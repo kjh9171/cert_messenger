@@ -27,7 +27,8 @@ URLS = {
     "cisa_kev": "https://www.cvedetails.com/cisa-known-exploited-vulnerabilities/kev-1.html",
     "boannews": "https://www.boannews.com/media/list.asp",
     "clien_park": "https://www.clien.net/service/group/community",
-    "ddanzi": "https://www.ddanzi.com/free"
+    "ddanzi": "https://www.ddanzi.com/free",
+    "mbc": "https://imnews.imbc.com/replay/2026/nwdesk/"
 }
 
 last_sent_titles = set()
@@ -196,9 +197,32 @@ def fetch_data():
                 count += 1
     except Exception as e: print(f"딴지게시판 크롤링 실패: {e}")
 
+    # 6. MBC 뉴스 크롤링
+    try:
+        # MBC '뉴스데스크' 리플레이 페이지 요청 (가장 확실한 최신 뉴스 목록)
+        res = requests.get(URLS["mbc"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 기사 리스트 항목들을 선택 (.item 클래스 사용)
+        items = soup.select('.item')[:5]
+        for item in items:
+            title_tag = item.select_one('.tit')
+            link_tag = item.select_one('a')
+            if title_tag and link_tag:
+                title = title_tag.get_text().strip()
+                link = link_tag['href']
+                if not link.startswith('http'): link = "https://imnews.imbc.com" + link
+                
+                all_content.append({
+                    "source": "MBC 뉴스", 
+                    "title": title, 
+                    "link": link,
+                    "category": "뉴스데스크"
+                })
+    except Exception as e: print(f"MBC 뉴스 크롤링 실패: {e}")
+
     return all_content
 
-async def send_briefing():
+async def send_briefing(is_test=False):
     """수집된 데이터를 브리핑 형식으로 포맷팅하여 텔레그램으로 전송합니다."""
     global last_sent_titles
     # 현재 한국 시간 정보 획득
@@ -208,8 +232,16 @@ async def send_briefing():
     
     # 각 사이트로부터 최신 데이터 호출
     data = fetch_data()
-    # [고도화] 링크를 기준으로 중복 여부 판단 (제목 변경 시 중복 전송 방지)
-    new_items = [d for d in data if d['link'] not in last_sent_titles]
+    # [고도화] 링크를 기준으로 중복 여부 판단
+    # 테스트 모드일 경우 신규 소스(딴지, MBC)를 중복 체크 없이 강제 전송 시도
+    if is_test:
+        new_items = [d for d in data if d['source'] in ["딴지게시판", "MBC 뉴스"]]
+        if not new_items:
+            print("[테스트 전송] 딴지게시판 또는 MBC 뉴스에서 기사를 찾지 못했습니다. 전체 데이터에서 추출합니다.")
+            new_items = data[:5]
+        print(f"[테스트 전송] {len(new_items)}개의 항목을 강제 전송합니다.")
+    else:
+        new_items = [d for d in data if d['link'] not in last_sent_titles]
 
     if not new_items:
         # 새로운 항목이 없으면 로그 남기고 종료
@@ -221,7 +253,7 @@ async def send_briefing():
 
     for item in new_items:
         # [고도화] 소스별 이모지 설정으로 시인성 강화
-        icons = {"연합뉴스 속보": "🗞️", "cve 취약점 알림": "🚨", "보안뉴스": "🛡️", "클리앙 모두의 공원": "👥", "딴지게시판": "🔥"}
+        icons = {"연합뉴스 속보": "🗞️", "cve 취약점 알림": "🚨", "보안뉴스": "🛡️", "클리앙 모두의 공원": "👥", "딴지게시판": "🔥", "MBC 뉴스": "📺"}
         icon = icons.get(item['source'], "📢")
 
         # [고도화] HTML 특수 문자 이스케이프 처리 (태그 충돌 방지)
@@ -238,6 +270,10 @@ async def send_briefing():
             report += f"👤 <b>작성자:</b> {html.escape(item['author'])}\n"
         if 'hits' in item:
             report += f"👀 <b>조회수:</b> {item['hits']}\n"
+        if 'category' in item:
+            report += f"📂 <b>카테고리:</b> {html.escape(item['category'])}\n"
+        if 'pub_time' in item:
+            report += f"🕒 <b>발행시각:</b> {html.escape(item['pub_time'])}\n"
             
         # 원문 링크를 버튼 형태의 텍스트로 제공
         report += f"🔗 <a href='{item['link']}'>원문 링크 보기</a>\n"
@@ -273,17 +309,19 @@ async def send_briefing():
         last_sent_titles = set(list(last_sent_titles)[-2000:])
     print(f"[{now_str}] 모든 알림 전송 완료.")
 
-def job_wrapper():
+def job_wrapper(is_test=False):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(send_briefing())
+        loop.run_until_complete(send_briefing(is_test=is_test))
     finally:
         loop.close()
 
 if __name__ == "__main__":
     print("취약점 및 뉴스 통합 브리핑 시스템 가동 시작...")
-    job_wrapper() 
+    # 시작 시 신규 추가된 항목 테스트 발송
+    job_wrapper(is_test=True) 
+    
     schedule.every().hour.at(":00").do(job_wrapper)
     while True:
         schedule.run_pending()
