@@ -12,6 +12,7 @@ import html # HTML 특수 문자 이스케이프 처리를 위한 모듈
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
 # SSL 경고 메시지 무시 설정
