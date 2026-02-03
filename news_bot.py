@@ -26,7 +26,8 @@ URLS = {
     "yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
     "cisa_kev": "https://www.cvedetails.com/cisa-known-exploited-vulnerabilities/kev-1.html",
     "boannews": "https://www.boannews.com/media/list.asp",
-    "clien_park": "https://www.clien.net/service/group/community"
+    "clien_park": "https://www.clien.net/service/group/community",
+    "ddanzi": "https://www.ddanzi.com/free"
 }
 
 last_sent_titles = set()
@@ -149,6 +150,52 @@ def fetch_data():
                 count += 1
     except Exception as e: print(f"클리앙 크롤링 실패: {e}")
 
+    # 5. 딴지일보 자유게시판 크롤링
+    try:
+        # 딴지일보 '자유게시판' 페이지 요청
+        res = requests.get(URLS["ddanzi"], headers=headers, timeout=10)
+        # 응답 받은 HTML 소스를 파싱 가능한 객체로 변환
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 게시글 리스트 항목들을 선택 (fz_change 테이블 내의 행들)
+        items = soup.select('table.fz_change tbody tr')
+        count = 0
+        for item in items:
+            if count >= 5: break # 상위 5개 항목만 수집
+            
+            # 공지사항 제외 (번호가 숫자인 것만 수집)
+            no_tag = item.select_one('.no')
+            if not no_tag or not no_tag.get_text().strip().isdigit():
+                continue
+
+            # 제목과 링크가 포함된 요소 선택
+            title_tag = item.select_one('.title a.link')
+            if title_tag:
+                # 게시글 제목 추출 (내부 span 태그 텍스트 포함)
+                title = title_tag.get_text().strip()
+                # 게시글 상세 링크 생성
+                link = title_tag['href']
+                if not link.startswith('http'): link = "https://www.ddanzi.com" + link
+                
+                # 작성자 정보 추출
+                author_tag = item.select_one('.author')
+                author = author_tag.get_text().strip() if author_tag else "익명"
+                
+                # 조회수 정보 추출
+                hit_tag = item.select_one('.readNum')
+                if not hit_tag: hit_tag = item.select_one('.hit')
+                hits = hit_tag.get_text().strip() if hit_tag else "0"
+                
+                # 수집된 정보를 상세 데이터와 함께 리스트에 추가
+                all_content.append({
+                    "source": "딴지게시판", 
+                    "title": title, 
+                    "link": link,
+                    "author": author,
+                    "hits": hits
+                })
+                count += 1
+    except Exception as e: print(f"딴지게시판 크롤링 실패: {e}")
+
     return all_content
 
 async def send_briefing():
@@ -174,7 +221,7 @@ async def send_briefing():
 
     for item in new_items:
         # [고도화] 소스별 이모지 설정으로 시인성 강화
-        icons = {"연합뉴스 속보": "🗞️", "cve 취약점 알림": "🚨", "보안뉴스": "🛡️", "클리앙 모두의 공원": "👥"}
+        icons = {"연합뉴스 속보": "🗞️", "cve 취약점 알림": "🚨", "보안뉴스": "🛡️", "클리앙 모두의 공원": "👥", "딴지게시판": "🔥"}
         icon = icons.get(item['source'], "📢")
 
         # [고도화] HTML 특수 문자 이스케이프 처리 (태그 충돌 방지)
