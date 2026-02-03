@@ -28,7 +28,9 @@ URLS = {
     "boannews": "https://www.boannews.com/media/list.asp",
     "clien_park": "https://www.clien.net/service/group/community",
     "ddanzi": "https://www.ddanzi.com/free",
-    "mbc": "https://imnews.imbc.com/replay/2026/nwdesk/"
+    "mbc": "https://imnews.imbc.com/replay/2026/nwdesk/",
+    "naver_stock": "https://stock.naver.com/",
+    "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
 }
 
 last_sent_titles = set()
@@ -67,6 +69,20 @@ def capture_article_image(url, filename):
 def fetch_data():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
     all_content = []
+
+    # Selenium 드라이버 초기 설정 (동적 페이지 수집용)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
+    
+    driver = None
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        print(f"Selenium 드라이버 초기화 실패: {e}")
 
     # 1. 연합뉴스 속보
     try:
@@ -220,6 +236,55 @@ def fetch_data():
                 })
     except Exception as e: print(f"MBC 뉴스 크롤링 실패: {e}")
 
+    # 7. 네이버 증권 AI 증시 요약 (Selenium 기반)
+    if driver:
+        try:
+            driver.get(URLS["naver_stock"])
+            time.sleep(5) # 동적 컨텐츠 로딩 대기
+            items = driver.find_elements(By.CSS_SELECTOR, '[class*="HomeAIMarketInsights_item"]')
+            for item in items[:3]:
+                try:
+                    title_el = item.find_element(By.TAG_NAME, 'p')
+                    title = title_el.text.strip()
+                    link = item.get_attribute('href')
+                    if title and link:
+                        all_content.append({
+                            "source": "네이버 증권 AI",
+                            "title": title,
+                            "link": link,
+                            "category": "증시 요약"
+                        })
+                except: continue
+        except Exception as e: print(f"네이버 증권 크롤링 실패: {e}")
+
+    # 8. 딴지뉴스 (Selenium 기반)
+    if driver:
+        try:
+            driver.get(URLS["ddanzi_news"])
+            time.sleep(5)
+            # 딴지뉴스 제목 링크 추출
+            links = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/ddanziNews/"]')
+            seen_links = set()
+            count = 0
+            for link_el in links:
+                if count >= 3: break
+                title = link_el.text.strip()
+                link = link_el.get_attribute('href')
+                if title and link and link not in seen_links:
+                    all_content.append({
+                        "source": "딴지뉴스",
+                        "title": title,
+                        "link": link,
+                        "category": "시사/이슈"
+                    })
+                    seen_links.add(link)
+                    count += 1
+        except Exception as e: print(f"딴지뉴스 크롤링 실패: {e}")
+
+    # 드라이버 종료
+    if driver:
+        driver.quit()
+
     return all_content
 
 async def send_briefing(is_test=False):
@@ -233,11 +298,12 @@ async def send_briefing(is_test=False):
     # 각 사이트로부터 최신 데이터 호출
     data = fetch_data()
     # [고도화] 링크를 기준으로 중복 여부 판단
-    # 테스트 모드일 경우 신규 소스(딴지, MBC)를 중복 체크 없이 강제 전송 시도
+    # 테스트 모드일 경우 신규 소스들을 중복 체크 없이 강제 전송 시도
     if is_test:
-        new_items = [d for d in data if d['source'] in ["딴지게시판", "MBC 뉴스"]]
+        test_sources = ["딴지게시판", "MBC 뉴스", "네이버 증권 AI", "딴지뉴스"]
+        new_items = [d for d in data if d['source'] in test_sources]
         if not new_items:
-            print("[테스트 전송] 딴지게시판 또는 MBC 뉴스에서 기사를 찾지 못했습니다. 전체 데이터에서 추출합니다.")
+            print("[테스트 전송] 신규 소스에서 기사를 찾지 못했습니다. 전체 데이터에서 추출합니다.")
             new_items = data[:5]
         print(f"[테스트 전송] {len(new_items)}개의 항목을 강제 전송합니다.")
     else:
@@ -253,7 +319,16 @@ async def send_briefing(is_test=False):
 
     for item in new_items:
         # [고도화] 소스별 이모지 설정으로 시인성 강화
-        icons = {"연합뉴스 속보": "🗞️", "cve 취약점 알림": "🚨", "보안뉴스": "🛡️", "클리앙 모두의 공원": "👥", "딴지게시판": "🔥", "MBC 뉴스": "📺"}
+        icons = {
+            "연합뉴스 속보": "🗞️", 
+            "cve 취약점 알림": "🚨", 
+            "보안뉴스": "🛡️", 
+            "클리앙 모두의 공원": "👥", 
+            "딴지게시판": "🔥", 
+            "MBC 뉴스": "📺",
+            "네이버 증권 AI": "📈",
+            "딴지뉴스": "📰"
+        }
         icon = icons.get(item['source'], "📢")
 
         # [고도화] HTML 특수 문자 이스케이프 처리 (태그 충돌 방지)

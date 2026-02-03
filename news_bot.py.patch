@@ -1,0 +1,52 @@
+import requests
+from bs4 import BeautifulSoup
+
+# ... (주소 설정 부분에 추가)
+URLS = {
+    # ...
+    "naver_stock": "https://stock.naver.com/",
+    "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
+}
+
+# ... (fetch_data 내부에 추가할 로직들)
+
+# Naver Stock AI News (Selenium 기반)
+def fetch_naver_stock(driver):
+    try:
+        driver.get(URLS["naver_stock"])
+        time.sleep(3)
+        items = driver.find_elements(By.CSS_SELECTOR, '[class*="HomeAIMarketInsights_item"]')
+        results = []
+        for item in items[:5]:
+            try:
+                title = item.find_element(By.TAG_NAME, 'p').text
+                link = item.get_attribute('href')
+                if title and link:
+                    results.append({"source": "네이버 증권 AI", "title": title, "link": link, "category": "증시요약"})
+            except: pass
+        return results
+    except Exception as e:
+        print(f"네이버 증권 크롤링 실패: {e}")
+        return []
+
+# Ddanzi News (Selenium 기반)
+def fetch_ddanzi_news(driver):
+    try:
+        driver.get(URLS["ddanzi_news"])
+        time.sleep(3)
+        # 딴지뉴스 게시판의 특정 구조 선택자 활용
+        items = driver.find_elements(By.CSS_SELECTOR, '.webzineList .title a')
+        if not items:
+            # 대안 선택자
+            items = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/ddanziNews/"]')
+            
+        results = []
+        for item in items[:5]:
+            title = item.text.strip()
+            link = item.get_attribute('href')
+            if title and link:
+                results.append({"source": "딴지뉴스", "title": title, "link": link, "category": "정치/이슈"})
+        return results
+    except Exception as e:
+        print(f"딴지뉴스 크롤링 실패: {e}")
+        return []
