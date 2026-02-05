@@ -21,6 +21,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- 설정 정보 ---
 TELEGRAM_TOKEN = '8458654696:AAFbyTsyeGw2f7OO9sYm3wlQiS5NY72F3J0'
 CHAT_ID = '7220628007'
+DB_FILE = "last_sent_links.txt"
 
 URLS = {
     "yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
@@ -33,125 +34,149 @@ URLS = {
     "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
 }
 
-last_sent_titles = set()
+def load_sent_links():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
+
+def save_sent_link(link):
+    with open(DB_FILE, "a", encoding="utf-8") as f:
+        f.write(link + "\n")
+
+last_sent_links = load_sent_links()
 
 def get_kst_now():
     return datetime.now(timezone(timedelta(hours=9)))
 
-def get_article_summary(url):
-    """기사 원문에서 첫 3문장을 안전하게 추출합니다."""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
+def get_article_summary(url, source):
+    """뉴스 소스별 맞춤형 본문 요약 추출"""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     try:
-        # 응답 시간을 5초로 제한하여 시스템 지연 방지
-        res = requests.get(url, headers=headers, timeout=5, verify=False)
-        res.encoding = 'utf-8' # 인코딩 명시
+        res = requests.get(url, headers=headers, timeout=8, verify=False)
+        res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 딴지일보 본문 영역의 다양한 선택자 대응
-        content_area = soup.select_one('#content_1') or soup.select_one('.read_body') or soup.select_one('.view_content')
-        
+        # 소스별 본문 영역 지정
+        if "ddanzi" in source:
+            content_area = soup.select_one('#content_1') or soup.select_one('.read_body')
+        elif "clien" in source:
+            content_area = soup.select_one('.post_article')
+        elif "naver" in url:
+            content_area = soup.select_one('#dic_area') or soup.select_one('#articleBodyContents')
+        else:
+            content_area = soup.select_one('article') or soup.select_one('.news_content')
+
         if content_area:
-            # 불필요한 스크립트나 스타일 태그 제거
-            for s in content_area(['script', 'style']):
-                s.decompose()
-            
             text = content_area.get_text(separator=' ', strip=True)
-            # 문장 부호 뒤 공백을 기준으로 분리
             sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if len(s.strip()) > 5]
             summary = " ".join(sentences[:3])
-            return summary if summary else "본문 요약을 가져올 수 없습니다."
-    except Exception as e:
-        print(f"요약 추출 중 오류 발생: {e}")
-    return "미리보기를 지원하지 않는 페이지입니다."
+            return summary if summary else "본문을 요약할 수 없습니다."
+    except:
+        pass
+    return "원문 링크를 참조해 주세요."
 
 def capture_article_image(url, filename):
-    """안정적인 캡처를 위한 타겟 영역 설정"""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1080,1200")
+    chrome_options.add_argument("--window-size=1080,1300")
 
     driver = None
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.set_page_load_timeout(20)
+        driver.set_page_load_timeout(30)
         driver.get(url)
-        time.sleep(3) # 동적 요소 로딩 대기
-        
-        # 캡처 실패 방지를 위해 바디 전체 캡처를 기본값으로 설정
+        time.sleep(5)
         driver.save_screenshot(filename)
         return filename
-    except Exception as e:
-        print(f"이미지 캡처 실패: {e}")
+    except:
         return None
     finally:
         if driver: driver.quit()
 
 def fetch_data():
-    """데이터 수집 로직 복구 및 안정화"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     all_content = []
 
-    # 5. 딴지일보 자유게시판 수집부 (복구)
+    # 1. 연합뉴스
+    try:
+        res = requests.get(URLS["yonhap"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select('.list_body li')[:3]:
+            title_tag = item.select_one('a')
+            if title_tag:
+                link = title_tag['href']
+                if not link.startswith('http'): link = "https://news.naver.com" + link
+                if link not in last_sent_links:
+                    all_content.append({"source": "연합뉴스 속보", "title": title_tag.get_text().strip(), "link": link})
+    except Exception as e: print(f"연합뉴스 에러: {e}")
+
+    # 2. 보안뉴스
+    try:
+        res = requests.get(URLS["boannews"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select('.news_list')[:3]:
+            title_tag = item.select_one('.news_txt')
+            link_tag = item.select_one('a')
+            if title_tag and link_tag:
+                link = "https://www.boannews.com" + link_tag['href']
+                if link not in last_sent_links:
+                    all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": link})
+    except Exception as e: print(f"보안뉴스 에러: {e}")
+
+    # 3. 클리앙
+    try:
+        res = requests.get(URLS["clien_park"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select('.list_content .list_item')[:3]:
+            title_tag = item.select_one('.list_title .list_subject')
+            if title_tag:
+                link = "https://www.clien.net" + title_tag['href']
+                if link not in last_sent_links:
+                    all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": link})
+    except Exception as e: print(f"클리앙 에러: {e}")
+
+    # 4. 딴지게시판
     try:
         res = requests.get(URLS["ddanzi"], headers=headers, timeout=10, verify=False)
         soup = BeautifulSoup(res.text, 'html.parser')
-        items = soup.select('table.fz_change tbody tr')
-        count = 0
-        for item in items:
-            if count >= 3: break
-            
+        for item in soup.select('table.fz_change tbody tr')[:5]:
             title_tag = item.select_one('.title a.link')
             if title_tag:
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://www.ddanzi.com" + link
-                
-                title = title_tag.get_text().strip()
-                # 괄호 안의 댓글 수 등 불필요 텍스트 정제
-                title = re.sub(r'\[\d+\]$', '', title).strip()
-                
-                all_content.append({
-                    "source": "딴지게시판", 
-                    "title": title, 
-                    "link": link,
-                    "summary": get_article_summary(link),
-                    "author": item.select_one('.author').get_text().strip() if item.select_one('.author') else "익명"
-                })
-                count += 1
-    except Exception as e:
-        print(f"딴지게시판 크롤링 복구 실패: {e}")
+                if link not in last_sent_links:
+                    title = re.sub(r'\[\d+\]$', '', title_tag.get_text().strip())
+                    all_content.append({"source": "딴지게시판", "title": title, "link": link})
+    except Exception as e: print(f"딴지 에러: {e}")
 
-    # 다른 뉴스 소스들도 위와 유사하게 summary 필드를 추가하여 유지 가능
     return all_content
 
-async def send_briefing(is_test=False):
-    global last_sent_titles
+async def send_briefing():
+    global last_sent_links
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    now_str = get_kst_now().strftime('%Y-%m-%d %H:%M')
-    
     data = fetch_data()
-    # 테스트 모드 시 무조건 전송, 일반 모드 시 중복 체크
-    new_items = data if is_test else [d for d in data if d['link'] not in last_sent_titles]
+    now_str = get_kst_now().strftime('%Y-%m-%d %H:%M')
 
-    if not new_items:
+    if not data:
         print(f"[{now_str}] 새로운 뉴스가 없습니다.")
         return
 
-    for item in new_items:
-        # HTML 태그 충돌 방지를 위한 철저한 이스케이프
+    for item in data:
+        summary = get_article_summary(item['link'], item['source'])
         safe_title = html.escape(item['title'])
-        safe_summary = html.escape(item.get('summary', '내용 요약 없음'))
+        safe_summary = html.escape(summary)
         
-        report = f"<b>🔥 {item['source']}</b>\n"
+        report = f"<b>📢 {item['source']}</b>\n"
         report += "━━━━━━━━━━━━━━━━━━━━\n"
         report += f"📌 <b>{safe_title}</b>\n\n"
-        report += f"📝 <b>3문장 요약:</b>\n"
+        report += f"📝 <b>내용 요약:</b>\n"
         report += f"<blockquote>{safe_summary}</blockquote>\n\n"
-        report += f"🔗 <a href='{item['link']}'>원문 읽기</a>\n"
+        report += f"🔗 <a href='{item['link']}'>원문 보기</a>\n"
         report += "━━━━━━━━━━━━━━━━━━━━\n"
-        report += f"⏰ <i>수집: {now_str}</i>"
 
         temp_img = f"shot_{int(time.time())}.png"
         try:
@@ -163,25 +188,20 @@ async def send_briefing(is_test=False):
             else:
                 await bot.send_message(chat_id=CHAT_ID, text=report, parse_mode='HTML')
             
-            last_sent_titles.add(item['link'])
-            await asyncio.sleep(2) # 전송 안정성을 위해 대기 시간 상향
+            last_sent_links.add(item['link'])
+            save_sent_link(item['link'])
+            await asyncio.sleep(2)
         except Exception as e:
-            print(f"전송 단계 오류: {e}")
+            print(f"전송 에러: {e}")
 
-def job_wrapper(is_test=False):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(send_briefing(is_test=is_test))
-    finally:
-        loop.close()
+def job_wrapper():
+    asyncio.run(send_briefing())
 
 if __name__ == "__main__":
-    print("뉴스봇 복구 모드 가동 중...")
-    # 즉시 테스트 발송을 수행하여 복구 확인
-    job_wrapper(is_test=True)
+    print("통합 뉴스 브리핑 시스템 복구 가동...")
+    job_wrapper() # 실행 즉시 수집 시작
     
-    schedule.every().hour.at(":00").do(job_wrapper)
+    schedule.every(30).minutes.do(job_wrapper)
     while True:
         schedule.run_pending()
         time.sleep(1)
