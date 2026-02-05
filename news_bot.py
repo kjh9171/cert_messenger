@@ -9,20 +9,20 @@ import sys
 import os
 import urllib3
 import html
-import re
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+# SSL 경고 메시지 무시 설정
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 설정 정보 ---
 TELEGRAM_TOKEN = '8458654696:AAFbyTsyeGw2f7OO9sYm3wlQiS5NY72F3J0'
 CHAT_ID = '7220628007'
-DB_FILE = "last_sent_links.txt"
 
+# 수집 대상 URL
 URLS = {
     "yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
     "cisa_kev": "https://www.cvedetails.com/cisa-known-exploited-vulnerabilities/kev-1.html",
@@ -34,54 +34,20 @@ URLS = {
     "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
 }
 
-def load_sent_links():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()
-
-def save_sent_link(link):
-    with open(DB_FILE, "a", encoding="utf-8") as f:
-        f.write(link + "\n")
-
-last_sent_links = load_sent_links()
+last_sent_titles = set()
 
 def get_kst_now():
+    """UTC 기반 환경에서도 정확한 한국 시간을 반환합니다."""
     return datetime.now(timezone(timedelta(hours=9)))
 
-def get_article_summary(url, source):
-    """뉴스 소스별 맞춤형 본문 요약 추출"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    try:
-        res = requests.get(url, headers=headers, timeout=8, verify=False)
-        res.encoding = 'utf-8'
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # 소스별 본문 영역 지정
-        if "ddanzi" in source:
-            content_area = soup.select_one('#content_1') or soup.select_one('.read_body')
-        elif "clien" in source:
-            content_area = soup.select_one('.post_article')
-        elif "naver" in url:
-            content_area = soup.select_one('#dic_area') or soup.select_one('#articleBodyContents')
-        else:
-            content_area = soup.select_one('article') or soup.select_one('.news_content')
-
-        if content_area:
-            text = content_area.get_text(separator=' ', strip=True)
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if len(s.strip()) > 5]
-            summary = " ".join(sentences[:3])
-            return summary if summary else "본문을 요약할 수 없습니다."
-    except:
-        pass
-    return "원문 링크를 참조해 주세요."
-
 def capture_article_image(url, filename):
+    """Selenium을 사용하여 기사 페이지 전체를 캡처합니다 (초기 방식)."""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1080,1300")
+    chrome_options.add_argument("--window-size=1280,1024")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
 
     driver = None
     try:
@@ -89,55 +55,67 @@ def capture_article_image(url, filename):
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(30)
         driver.get(url)
-        time.sleep(5)
+        time.sleep(5) 
+        
         driver.save_screenshot(filename)
         return filename
-    except:
+    except Exception as e:
+        print(f"캡처 실패 ({url}): {e}")
         return None
     finally:
-        if driver: driver.quit()
+        if driver:
+            driver.quit()
 
 def fetch_data():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
     all_content = []
+
+    # Selenium 드라이버 초기 설정 (동적 페이지용)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    
+    driver = None
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        print(f"드라이버 초기화 실패: {e}")
 
     # 1. 연합뉴스
     try:
         res = requests.get(URLS["yonhap"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.list_body li')[:3]:
+        for item in soup.select('.list_body li')[:5]:
             title_tag = item.select_one('a')
             if title_tag:
+                title = title_tag.get_text().strip()
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://news.naver.com" + link
-                if link not in last_sent_links:
-                    all_content.append({"source": "연합뉴스 속보", "title": title_tag.get_text().strip(), "link": link})
-    except Exception as e: print(f"연합뉴스 에러: {e}")
+                all_content.append({"source": "연합뉴스 속보", "title": title, "link": link})
+    except: pass
 
     # 2. 보안뉴스
     try:
         res = requests.get(URLS["boannews"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.news_list')[:3]:
+        for item in soup.select('.news_list')[:5]:
             title_tag = item.select_one('.news_txt')
             link_tag = item.select_one('a')
             if title_tag and link_tag:
-                link = "https://www.boannews.com" + link_tag['href']
-                if link not in last_sent_links:
-                    all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": link})
-    except Exception as e: print(f"보안뉴스 에러: {e}")
+                all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": "https://www.boannews.com" + link_tag['href']})
+    except: pass
 
     # 3. 클리앙
     try:
         res = requests.get(URLS["clien_park"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.list_content .list_item')[:3]:
+        for item in soup.select('.list_content .list_item')[:5]:
             title_tag = item.select_one('.list_title .list_subject')
             if title_tag:
-                link = "https://www.clien.net" + title_tag['href']
-                if link not in last_sent_links:
-                    all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": link})
-    except Exception as e: print(f"클리앙 에러: {e}")
+                all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": "https://www.clien.net" + title_tag['href']})
+    except: pass
 
     # 4. 딴지게시판
     try:
@@ -148,35 +126,33 @@ def fetch_data():
             if title_tag:
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://www.ddanzi.com" + link
-                if link not in last_sent_links:
-                    title = re.sub(r'\[\d+\]$', '', title_tag.get_text().strip())
-                    all_content.append({"source": "딴지게시판", "title": title, "link": link})
-    except Exception as e: print(f"딴지 에러: {e}")
+                all_content.append({"source": "딴지게시판", "title": title_tag.get_text().strip(), "link": link})
+    except: pass
 
+    if driver: driver.quit()
     return all_content
 
-async def send_briefing():
-    global last_sent_links
+async def send_briefing(is_test=False):
+    global last_sent_titles
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     data = fetch_data()
     now_str = get_kst_now().strftime('%Y-%m-%d %H:%M')
 
-    if not data:
-        print(f"[{now_str}] 새로운 뉴스가 없습니다.")
+    # 테스트 모드 시 5개, 일반 모드 시 신규 항목만
+    new_items = data[:5] if is_test else [d for d in data if d['link'] not in last_sent_titles]
+
+    if not new_items:
+        print(f"[{now_str}] 업데이트 없음")
         return
 
-    for item in data:
-        summary = get_article_summary(item['link'], item['source'])
+    for item in new_items:
         safe_title = html.escape(item['title'])
-        safe_summary = html.escape(summary)
-        
         report = f"<b>📢 {item['source']}</b>\n"
         report += "━━━━━━━━━━━━━━━━━━━━\n"
         report += f"📌 <b>{safe_title}</b>\n\n"
-        report += f"📝 <b>내용 요약:</b>\n"
-        report += f"<blockquote>{safe_summary}</blockquote>\n\n"
-        report += f"🔗 <a href='{item['link']}'>원문 보기</a>\n"
+        report += f"🔗 <a href='{item['link']}'>원문 링크 보기</a>\n"
         report += "━━━━━━━━━━━━━━━━━━━━\n"
+        report += f"⏰ <i>수집일시: {now_str}</i>"
 
         temp_img = f"shot_{int(time.time())}.png"
         try:
@@ -188,20 +164,23 @@ async def send_briefing():
             else:
                 await bot.send_message(chat_id=CHAT_ID, text=report, parse_mode='HTML')
             
-            last_sent_links.add(item['link'])
-            save_sent_link(item['link'])
-            await asyncio.sleep(2)
-        except Exception as e:
-            print(f"전송 에러: {e}")
+            last_sent_titles.add(item['link'])
+            await asyncio.sleep(1)
+        except Exception as e: print(f"전송 오류: {e}")
 
-def job_wrapper():
-    asyncio.run(send_briefing())
+def job_wrapper(is_test=False):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(send_briefing(is_test=is_test))
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
-    print("통합 뉴스 브리핑 시스템 복구 가동...")
-    job_wrapper() # 실행 즉시 수집 시작
+    print("초기 설정으로 시스템 원복 및 가동 시작...")
+    job_wrapper(is_test=True) # 시작 시 5개 테스트 발송
     
-    schedule.every(30).minutes.do(job_wrapper)
+    schedule.every().hour.at(":00").do(job_wrapper)
     while True:
         schedule.run_pending()
         time.sleep(1)
