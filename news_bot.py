@@ -22,7 +22,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 TELEGRAM_TOKEN = '8458654696:AAFbyTsyeGw2f7OO9sYm3wlQiS5NY72F3J0'
 CHAT_ID = '7220628007'
 
-# 수집 대상 URL
+# 수집 대상 URL (원본 목록 유지)
 URLS = {
     "yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
     "cisa_kev": "https://www.cvedetails.com/cisa-known-exploited-vulnerabilities/kev-1.html",
@@ -37,11 +37,11 @@ URLS = {
 last_sent_titles = set()
 
 def get_kst_now():
-    """UTC 기반 환경에서도 정확한 한국 시간을 반환합니다."""
+    """한국 표준시를 반환합니다."""
     return datetime.now(timezone(timedelta(hours=9)))
 
 def capture_article_image(url, filename):
-    """Selenium을 사용하여 기사 페이지 전체를 캡처합니다 (초기 방식)."""
+    """Selenium을 사용하여 페이지 전체를 캡처합니다."""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
@@ -56,47 +56,44 @@ def capture_article_image(url, filename):
         driver.set_page_load_timeout(30)
         driver.get(url)
         time.sleep(5) 
-        
         driver.save_screenshot(filename)
         return filename
     except Exception as e:
-        print(f"캡처 실패 ({url}): {e}")
+        print(f"캡처 실패: {e}")
         return None
     finally:
-        if driver:
-            driver.quit()
+        if driver: driver.quit()
 
 def fetch_data():
+    """모든 소스에서 데이터를 수집합니다."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
     all_content = []
 
-    # Selenium 드라이버 초기 설정 (동적 페이지용)
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
-    driver = None
-    try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-    except Exception as e:
-        print(f"드라이버 초기화 실패: {e}")
-
-    # 1. 연합뉴스
+    # 1. 연합뉴스 속보
     try:
         res = requests.get(URLS["yonhap"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         for item in soup.select('.list_body li')[:5]:
             title_tag = item.select_one('a')
             if title_tag:
-                title = title_tag.get_text().strip()
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://news.naver.com" + link
-                all_content.append({"source": "연합뉴스 속보", "title": title, "link": link})
+                all_content.append({"source": "연합뉴스 속보", "title": title_tag.get_text().strip(), "link": link})
     except: pass
 
-    # 2. 보안뉴스
+    # 2. CISA CVE 취약점
+    try:
+        res = requests.get(URLS["cisa_kev"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        rows = soup.select('table.searchresults tr')[1:6]
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) > 2:
+                title = f"[{cols[1].get_text().strip()}] {cols[2].get_text().strip()}"
+                all_content.append({"source": "cve 취약점 알림", "title": title, "link": URLS["cisa_kev"]})
+    except: pass
+
+    # 3. 보안뉴스
     try:
         res = requests.get(URLS["boannews"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -107,7 +104,7 @@ def fetch_data():
                 all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": "https://www.boannews.com" + link_tag['href']})
     except: pass
 
-    # 3. 클리앙
+    # 4. 클리앙 모두의 공원
     try:
         res = requests.get(URLS["clien_park"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -117,7 +114,7 @@ def fetch_data():
                 all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": "https://www.clien.net" + title_tag['href']})
     except: pass
 
-    # 4. 딴지게시판
+    # 5. 딴지일보 자유게시판
     try:
         res = requests.get(URLS["ddanzi"], headers=headers, timeout=10, verify=False)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -129,7 +126,19 @@ def fetch_data():
                 all_content.append({"source": "딴지게시판", "title": title_tag.get_text().strip(), "link": link})
     except: pass
 
-    if driver: driver.quit()
+    # 6. MBC 뉴스
+    try:
+        res = requests.get(URLS["mbc"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select('.item')[:5]:
+            title_tag = item.select_one('.tit')
+            link_tag = item.select_one('a')
+            if title_tag and link_tag:
+                link = link_tag['href']
+                if not link.startswith('http'): link = "https://imnews.imbc.com" + link
+                all_content.append({"source": "MBC 뉴스", "title": title_tag.get_text().strip(), "link": link})
+    except: pass
+
     return all_content
 
 async def send_briefing(is_test=False):
@@ -138,11 +147,11 @@ async def send_briefing(is_test=False):
     data = fetch_data()
     now_str = get_kst_now().strftime('%Y-%m-%d %H:%M')
 
-    # 테스트 모드 시 5개, 일반 모드 시 신규 항목만
+    # 테스트 시 상위 5개, 일반 시 신규 기사만 전송
     new_items = data[:5] if is_test else [d for d in data if d['link'] not in last_sent_titles]
 
     if not new_items:
-        print(f"[{now_str}] 업데이트 없음")
+        print(f"[{now_str}] 새로운 정보가 없습니다.")
         return
 
     for item in new_items:
@@ -166,7 +175,8 @@ async def send_briefing(is_test=False):
             
             last_sent_titles.add(item['link'])
             await asyncio.sleep(1)
-        except Exception as e: print(f"전송 오류: {e}")
+        except Exception as e:
+            print(f"전송 오류: {e}")
 
 def job_wrapper(is_test=False):
     loop = asyncio.new_event_loop()
@@ -177,8 +187,9 @@ def job_wrapper(is_test=False):
         loop.close()
 
 if __name__ == "__main__":
-    print("초기 설정으로 시스템 원복 및 가동 시작...")
-    job_wrapper(is_test=True) # 시작 시 5개 테스트 발송
+    print("통합 뉴스 브리핑 시스템 원복 가동 시작...")
+    # 초기 실행 시 소스별 기사 테스트 발송
+    job_wrapper(is_test=True) 
     
     schedule.every().hour.at(":00").do(job_wrapper)
     while True:
