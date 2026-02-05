@@ -9,18 +9,24 @@ import sys
 import os
 import urllib3
 import html
+import json
+import logging
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # SSL 경고 메시지 무시 설정
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 설정 정보 ---
-TELEGRAM_TOKEN = '8458654696:AAFbyTsyeGw2f7OO9sYm3wlQiS5NY72F3J0'
-CHAT_ID = '7220628007'
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '8458654696:AAFbyTsyeGw2f7OO9sYm3wlQiS5NY72F3J0')
+CHAT_ID = os.getenv('CHAT_ID', '7220628007')
 
 # 수집 대상 URL (원본 목록 유지)
 URLS = {
@@ -34,7 +40,25 @@ URLS = {
     "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
 }
 
-last_sent_titles = set()
+SENT_TITLES_FILE = 'sent_titles.json'
+
+def load_sent_titles():
+    if os.path.exists(SENT_TITLES_FILE) and os.path.isfile(SENT_TITLES_FILE):
+        try:
+            with open(SENT_TITLES_FILE, 'r') as f:
+                return set(json.load(f))
+        except Exception as e:
+            logger.error(f"Failed to load sent titles: {e}")
+    return set()
+
+def save_sent_titles(titles):
+    try:
+        with open(SENT_TITLES_FILE, 'w') as f:
+            json.dump(list(titles), f)
+    except Exception as e:
+        logger.error(f"Failed to save sent titles: {e}")
+
+last_sent_titles = load_sent_titles()
 
 def get_kst_now():
     """한국 표준시를 반환합니다."""
@@ -57,12 +81,14 @@ def capture_article_image(url, filename):
         driver.get(url)
         time.sleep(5) 
         driver.save_screenshot(filename)
+        logger.info(f"Screenshot captured: {filename}")
         return filename
     except Exception as e:
-        print(f"캡처 실패: {e}")
+        logger.error(f"캡처 실패: {e}")
         return None
     finally:
-        if driver: driver.quit()
+        if driver: 
+            driver.quit()
 
 def fetch_data():
     """모든 소스에서 데이터를 수집합니다."""
@@ -79,7 +105,9 @@ def fetch_data():
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://news.naver.com" + link
                 all_content.append({"source": "연합뉴스 속보", "title": title_tag.get_text().strip(), "link": link})
-    except: pass
+        logger.info(f"연합뉴스: {len([x for x in all_content if x['source'] == '연합뉴스 속보'])} items")
+    except Exception as e:
+        logger.error(f"연합뉴스 수집 실패: {e}")
 
     # 2. CISA CVE 취약점
     try:
@@ -91,7 +119,9 @@ def fetch_data():
             if len(cols) > 2:
                 title = f"[{cols[1].get_text().strip()}] {cols[2].get_text().strip()}"
                 all_content.append({"source": "cve 취약점 알림", "title": title, "link": URLS["cisa_kev"]})
-    except: pass
+        logger.info(f"CISA CVE: {len([x for x in all_content if x['source'] == 'cve 취약점 알림'])} items")
+    except Exception as e:
+        logger.error(f"CISA CVE 수집 실패: {e}")
 
     # 3. 보안뉴스
     try:
@@ -102,7 +132,9 @@ def fetch_data():
             link_tag = item.select_one('a')
             if title_tag and link_tag:
                 all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": "https://www.boannews.com" + link_tag['href']})
-    except: pass
+        logger.info(f"보안뉴스: {len([x for x in all_content if x['source'] == '보안뉴스'])} items")
+    except Exception as e:
+        logger.error(f"보안뉴스 수집 실패: {e}")
 
     # 4. 클리앙 모두의 공원
     try:
@@ -112,7 +144,9 @@ def fetch_data():
             title_tag = item.select_one('.list_title .list_subject')
             if title_tag:
                 all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": "https://www.clien.net" + title_tag['href']})
-    except: pass
+        logger.info(f"클리앙: {len([x for x in all_content if x['source'] == '클리앙'])} items")
+    except Exception as e:
+        logger.error(f"클리앙 수집 실패: {e}")
 
     # 5. 딴지일보 자유게시판
     try:
@@ -124,7 +158,9 @@ def fetch_data():
                 link = title_tag['href']
                 if not link.startswith('http'): link = "https://www.ddanzi.com" + link
                 all_content.append({"source": "딴지게시판", "title": title_tag.get_text().strip(), "link": link})
-    except: pass
+        logger.info(f"딴지게시판: {len([x for x in all_content if x['source'] == '딴지게시판'])} items")
+    except Exception as e:
+        logger.error(f"딴지게시판 수집 실패: {e}")
 
     # 6. MBC 뉴스
     try:
@@ -137,7 +173,9 @@ def fetch_data():
                 link = link_tag['href']
                 if not link.startswith('http'): link = "https://imnews.imbc.com" + link
                 all_content.append({"source": "MBC 뉴스", "title": title_tag.get_text().strip(), "link": link})
-    except: pass
+        logger.info(f"MBC 뉴스: {len([x for x in all_content if x['source'] == 'MBC 뉴스'])} items")
+    except Exception as e:
+        logger.error(f"MBC 뉴스 수집 실패: {e}")
 
     return all_content
 
@@ -151,8 +189,10 @@ async def send_briefing(is_test=False):
     new_items = data[:5] if is_test else [d for d in data if d['link'] not in last_sent_titles]
 
     if not new_items:
-        print(f"[{now_str}] 새로운 정보가 없습니다.")
+        logger.info(f"[{now_str}] 새로운 정보가 없습니다.")
         return
+
+    logger.info(f"[{now_str}] {len(new_items)} 개의 새로운 정보를 전송합니다.")
 
     for item in new_items:
         safe_title = html.escape(item['title'])
@@ -174,9 +214,10 @@ async def send_briefing(is_test=False):
                 await bot.send_message(chat_id=CHAT_ID, text=report, parse_mode='HTML')
             
             last_sent_titles.add(item['link'])
+            save_sent_titles(last_sent_titles)
             await asyncio.sleep(1)
         except Exception as e:
-            print(f"전송 오류: {e}")
+            logger.error(f"전송 오류: {e}")
 
 def job_wrapper(is_test=False):
     loop = asyncio.new_event_loop()
@@ -187,7 +228,7 @@ def job_wrapper(is_test=False):
         loop.close()
 
 if __name__ == "__main__":
-    print("통합 뉴스 브리핑 시스템 원복 가동 시작...")
+    logger.info("통합 뉴스 브리핑 시스템 원복 가동 시작...")
     # 초기 실행 시 소스별 기사 테스트 발송
     job_wrapper(is_test=True) 
     

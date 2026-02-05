@@ -1,0 +1,7 @@
+requests
+beautifulsoup4
+python-telegram-bot
+selenium
+webdriver-manager
+schedule
+urllib3

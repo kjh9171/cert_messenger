@@ -7,8 +7,11 @@ services:
     restart: always
     environment:
       - TZ=Asia/Seoul # 컨테이너 내부 시간대를 서울로 설정
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - CHAT_ID=${CHAT_ID}
     volumes:
       - /etc/localtime:/etc/localtime:ro # 호스트의 시간 설정 공유 (읽기 전용)
+      - ./sent_titles.json:/app/sent_titles.json # 전송 기록 유지
     logging:
       driver: "json-file"
       options:

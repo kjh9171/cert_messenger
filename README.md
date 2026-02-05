@@ -18,8 +18,21 @@
 터미널에서 아래 명령어를 입력하여 필요한 패키지를 설치합니다.
 
 ```bash
-/usr/local/bin/python3 -m pip install requests beautifulsoup4 python-telegram-bot schedule google-generativeai --break-system-packages
+pip install -r requirements.txt
+```
 
+또는 수동으로:
+
+```bash
+pip install requests beautifulsoup4 python-telegram-bot selenium webdriver-manager schedule urllib3
+```
+
+**환경 변수 설정:**
+Telegram 토큰과 채팅 ID를 환경 변수로 설정하세요.
+
+```bash
+export TELEGRAM_TOKEN='your_token_here'
+export CHAT_ID='your_chat_id_here'
 ```
 
 ### 3. 주요 설정 정보 (Configuration)
@@ -32,19 +45,40 @@
 
 ### 4. 실행 방법
 
-**터미널에서 즉시 실행:**
+**로컬 실행 (가상환경 없이):**
+환경 변수를 설정한 후 실행하세요.
 
 ```bash
-/usr/local/bin/python3 /Users/macbookpro_cert/cert_messenger/news_bot.py
-
+export TELEGRAM_TOKEN='your_token'
+export CHAT_ID='your_chat_id'
+python3 news_bot.py
 ```
 
-**백그라운드 실행 (맥북/Linux 기준):**
+**Docker 실행:**
+`.env` 파일을 생성하여 환경 변수를 설정하세요.
+
+```bash
+echo "TELEGRAM_TOKEN=your_token" > .env
+echo "CHAT_ID=your_chat_id" >> .env
+```
+
+그 후 Docker Compose로 실행:
+
+```bash
+docker-compose up --build -d
+```
+
+로그 확인:
+
+```bash
+docker logs news_bot_service
+```
+
+**백그라운드 실행 (로컬):**
 프로그램을 종료해도 계속 실행되게 하려면 `nohup` 명령어를 사용합니다.
 
 ```bash
-nohup /usr/local/bin/python3 /Users/macbookpro_cert/cert_messenger/news_bot.py &
-
+nohup python3 news_bot.py &
 ```
 
 ### 5. 파일 구조

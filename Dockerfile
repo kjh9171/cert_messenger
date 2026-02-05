@@ -31,7 +31,7 @@ WORKDIR /app
 COPY . .
 
 # 파이썬 라이브러리 설치
-RUN pip install --no-cache-dir requests beautifulsoup4 python-telegram-bot schedule selenium webdriver-manager
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 프로그램 실행
 CMD ["python", "news_bot.py"]
