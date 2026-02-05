@@ -12,6 +12,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro # 호스트의 시간 설정 공유 (읽기 전용)
       - ./sent_titles.json:/app/sent_titles.json # 전송 기록 유지
+      - ./sent_titles.json:/app/sent_titles.json # 전송 기록 유지
     logging:
       driver: "json-file"
       options:

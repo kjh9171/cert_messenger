@@ -232,7 +232,7 @@ if __name__ == "__main__":
     # 초기 실행 시 소스별 기사 테스트 발송
     job_wrapper(is_test=True) 
     
-    schedule.every().hour.at(":00").do(job_wrapper)
+    schedule.every(5).minutes.do(job_wrapper)
     while True:
         schedule.run_pending()
         time.sleep(1)
