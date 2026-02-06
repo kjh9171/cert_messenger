@@ -31,7 +31,10 @@ CHAT_ID = os.getenv('CHAT_ID', '7220628007')
 # 수집 대상 URL (원본 목록 유지)
 URLS = {
     "clien_useful": "https://www.clien.net/service/board/useful",
-    "clien_news": "https://www.clien.net/service/board/news"
+    "clien_news": "https://www.clien.net/service/board/news",
+    "naver_yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
+    "boannews": "https://www.boannews.com/media/t_list.asp",
+    "krcert": "https://krcert.or.kr/kr/bbs/list.do?menuNo=205020&bbsId=B0000133"
 }
 
 SENT_TITLES_FILE = 'sent_titles.json'
@@ -122,6 +125,73 @@ def fetch_data():
         logger.info(f"클리앙 새로운 소식: {len([x for x in all_content if x['source'] == '클리앙 새로운 소식'])} items")
     except Exception as e:
         logger.error(f"클리앙 새로운 소식 수집 실패: {e}")
+
+    # 3. 네이버 연합뉴스 속보
+    try:
+        res = requests.get(URLS["naver_yonhap"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select('.list_body li')[:5]:
+            title_tag = item.select_one('a')
+            if title_tag:
+                link = title_tag['href']
+                if not link.startswith('http'): link = "https://news.naver.com" + link
+                all_content.append({
+                    "source": "네이버 연합뉴스 속보",
+                    "title": title_tag.get_text().strip(),
+                    "link": link
+                })
+        logger.info(f"네이버 연합뉴스 속보: {len([x for x in all_content if x['source'] == '네이버 연합뉴스 속보'])} items")
+    except Exception as e:
+        logger.error(f"네이버 연합뉴스 수집 실패: {e}")
+
+    # 4. 보안뉴스
+    try:
+        res = requests.get(URLS["boannews"], headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 보안뉴스는 .news_list a.news_content 또는 a 내부의 span으로 식별 가능
+        for item in soup.select('.news_list a')[:10]: # 링크가 여러개일 수 있어 넉넉히 탐색
+            title_tag = item.select_one('span')
+            if title_tag and item.get('href'):
+                link = item['href']
+                if not link.startswith('http'): link = "https://www.boannews.com" + link
+                all_content.append({
+                    "source": "보안뉴스",
+                    "title": title_tag.get_text().strip(),
+                    "link": link
+                })
+        # 중복 제거 (a 태그가 여러개 잡힐 수 있음)
+        seen_links = set()
+        temp_content = []
+        for c in all_content:
+            if c['source'] == "보안뉴스":
+                if c['link'] not in seen_links:
+                    seen_links.add(c['link'])
+                    temp_content.append(c)
+            else:
+                temp_content.append(c)
+        all_content = temp_content
+        logger.info(f"보안뉴스: {len([x for x in all_content if x['source'] == '보안뉴스'])} items")
+    except Exception as e:
+        logger.error(f"보안뉴스 수집 실패: {e}")
+
+    # 5. KISA 보안공지 (KRCERT)
+    try:
+        res = requests.get(URLS["krcert"], headers=headers, timeout=10, verify=False)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # .bbsList 대신 .tbl table 또는 .board .tbl table 사용
+        for item in soup.select('.tbl table tbody tr')[:5]:
+            title_tag = item.select_one('td.sbj a')
+            if title_tag:
+                link = title_tag['href']
+                if not link.startswith('http'): link = "https://krcert.or.kr" + link
+                all_content.append({
+                    "source": "KISA 보안공지",
+                    "title": title_tag.get_text().strip(),
+                    "link": link
+                })
+        logger.info(f"KISA 보안공지: {len([x for x in all_content if x['source'] == 'KISA 보안공지'])} items")
+    except Exception as e:
+        logger.error(f"KISA 보안공지 수집 실패: {e}")
 
     return all_content
 
