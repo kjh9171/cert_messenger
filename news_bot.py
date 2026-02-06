@@ -30,14 +30,8 @@ CHAT_ID = os.getenv('CHAT_ID', '7220628007')
 
 # 수집 대상 URL (원본 목록 유지)
 URLS = {
-    "yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
-    "cisa_kev": "https://www.cvedetails.com/cisa-known-exploited-vulnerabilities/kev-1.html",
-    "boannews": "https://www.boannews.com/media/list.asp",
-    "clien_park": "https://www.clien.net/service/group/community",
-    "ddanzi": "https://www.ddanzi.com/free",
-    "mbc": "https://imnews.imbc.com/replay/2026/nwdesk/",
-    "naver_stock": "https://stock.naver.com/",
-    "ddanzi_news": "https://www.ddanzi.com/ddanziNews"
+    "clien_useful": "https://www.clien.net/service/board/useful",
+    "clien_news": "https://www.clien.net/service/board/news"
 }
 
 SENT_TITLES_FILE = 'sent_titles.json'
@@ -91,91 +85,43 @@ def capture_article_image(url, filename):
             driver.quit()
 
 def fetch_data():
-    """모든 소스에서 데이터를 수집합니다."""
+    """클리앙의 유용한 사이트와 새로운 소식 게시판에서 데이터를 수집합니다."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"}
     all_content = []
 
-    # 1. 연합뉴스 속보
+    # 1. 클리앙 유용한 사이트
     try:
-        res = requests.get(URLS["yonhap"], headers=headers, timeout=10)
+        res = requests.get(URLS["clien_useful"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.list_body li')[:5]:
-            title_tag = item.select_one('a')
+        # 공지사항 제외하고 일반 게시글만 수집 (보통 공지사항은 .list_notice 클래스가 있거나 순서가 앞임)
+        # 하지만 기존 로직을 따라 상위 5개를 가져옴
+        for item in soup.select('.list_content .list_item')[:5]:
+            title_tag = item.select_one('.list_title .list_subject')
             if title_tag:
-                link = title_tag['href']
-                if not link.startswith('http'): link = "https://news.naver.com" + link
-                all_content.append({"source": "연합뉴스 속보", "title": title_tag.get_text().strip(), "link": link})
-        logger.info(f"연합뉴스: {len([x for x in all_content if x['source'] == '연합뉴스 속보'])} items")
+                all_content.append({
+                    "source": "클리앙 유용한 사이트",
+                    "title": title_tag.get_text().strip(),
+                    "link": "https://www.clien.net" + title_tag['href']
+                })
+        logger.info(f"클리앙 유용한 사이트: {len([x for x in all_content if x['source'] == '클리앙 유용한 사이트'])} items")
     except Exception as e:
-        logger.error(f"연합뉴스 수집 실패: {e}")
+        logger.error(f"클리앙 유용한 사이트 수집 실패: {e}")
 
-    # 2. CISA CVE 취약점
+    # 2. 클리앙 새로운 소식
     try:
-        res = requests.get(URLS["cisa_kev"], headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        rows = soup.select('table.searchresults tr')[1:6]
-        for row in rows:
-            cols = row.find_all('td')
-            if len(cols) > 2:
-                title = f"[{cols[1].get_text().strip()}] {cols[2].get_text().strip()}"
-                all_content.append({"source": "cve 취약점 알림", "title": title, "link": URLS["cisa_kev"]})
-        logger.info(f"CISA CVE: {len([x for x in all_content if x['source'] == 'cve 취약점 알림'])} items")
-    except Exception as e:
-        logger.error(f"CISA CVE 수집 실패: {e}")
-
-    # 3. 보안뉴스
-    try:
-        res = requests.get(URLS["boannews"], headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.news_list')[:5]:
-            title_tag = item.select_one('.news_txt')
-            link_tag = item.select_one('a')
-            if title_tag and link_tag:
-                all_content.append({"source": "보안뉴스", "title": title_tag.get_text().strip(), "link": "https://www.boannews.com" + link_tag['href']})
-        logger.info(f"보안뉴스: {len([x for x in all_content if x['source'] == '보안뉴스'])} items")
-    except Exception as e:
-        logger.error(f"보안뉴스 수집 실패: {e}")
-
-    # 4. 클리앙 모두의 공원
-    try:
-        res = requests.get(URLS["clien_park"], headers=headers, timeout=10)
+        res = requests.get(URLS["clien_news"], headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         for item in soup.select('.list_content .list_item')[:5]:
             title_tag = item.select_one('.list_title .list_subject')
             if title_tag:
-                all_content.append({"source": "클리앙", "title": title_tag.get_text().strip(), "link": "https://www.clien.net" + title_tag['href']})
-        logger.info(f"클리앙: {len([x for x in all_content if x['source'] == '클리앙'])} items")
+                all_content.append({
+                    "source": "클리앙 새로운 소식",
+                    "title": title_tag.get_text().strip(),
+                    "link": "https://www.clien.net" + title_tag['href']
+                })
+        logger.info(f"클리앙 새로운 소식: {len([x for x in all_content if x['source'] == '클리앙 새로운 소식'])} items")
     except Exception as e:
-        logger.error(f"클리앙 수집 실패: {e}")
-
-    # 5. 딴지일보 자유게시판
-    try:
-        res = requests.get(URLS["ddanzi"], headers=headers, timeout=10, verify=False)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('table.fz_change tbody tr')[:5]:
-            title_tag = item.select_one('.title a.link')
-            if title_tag:
-                link = title_tag['href']
-                if not link.startswith('http'): link = "https://www.ddanzi.com" + link
-                all_content.append({"source": "딴지게시판", "title": title_tag.get_text().strip(), "link": link})
-        logger.info(f"딴지게시판: {len([x for x in all_content if x['source'] == '딴지게시판'])} items")
-    except Exception as e:
-        logger.error(f"딴지게시판 수집 실패: {e}")
-
-    # 6. MBC 뉴스
-    try:
-        res = requests.get(URLS["mbc"], headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        for item in soup.select('.item')[:5]:
-            title_tag = item.select_one('.tit')
-            link_tag = item.select_one('a')
-            if title_tag and link_tag:
-                link = link_tag['href']
-                if not link.startswith('http'): link = "https://imnews.imbc.com" + link
-                all_content.append({"source": "MBC 뉴스", "title": title_tag.get_text().strip(), "link": link})
-        logger.info(f"MBC 뉴스: {len([x for x in all_content if x['source'] == 'MBC 뉴스'])} items")
-    except Exception as e:
-        logger.error(f"MBC 뉴스 수집 실패: {e}")
+        logger.error(f"클리앙 새로운 소식 수집 실패: {e}")
 
     return all_content
 
