@@ -30,8 +30,7 @@ CHAT_ID = os.getenv('CHAT_ID', '7220628007')
 
 # 수집 대상 URL (원본 목록 유지)
 URLS = {
-    "clien_useful": "https://www.clien.net/service/board/useful",
-    "clien_news": "https://www.clien.net/service/board/news",
+    "clien_news": "https://www.clien.net/service/board/park",
     "naver_yonhap": "https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&sid1=001&sid2=140&oid=001&isYeonhapFlash=Y",
     "boannews": "https://www.boannews.com/media/t_list.asp",
     "krcert": "https://krcert.or.kr/kr/bbs/list.do?menuNo=205020&bbsId=B0000133"
